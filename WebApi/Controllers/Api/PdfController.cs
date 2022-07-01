@@ -5,14 +5,19 @@ using PdfSharp.Pdf;
 using PdfSharp.Pdf.AcroForms;
 using PdfSharp.Pdf.IO;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.Xml;
 using System.Text;
 using System.Threading.Tasks;
 using System.Web.Http;
 using System.Xml;
 using System.Xml.Serialization;
+using WebApi.Helpers;
 using WebApi.Models;
 
 namespace WebApi.Controllers.Api
@@ -26,6 +31,7 @@ namespace WebApi.Controllers.Api
     [RoutePrefix("api/pdf")]
     public class PdfController : ApiController
     {
+        private static HttpClient _httpClient = new HttpClient();
 
         /// <summary>
         /// Loads a pdf from file syste
@@ -43,6 +49,17 @@ namespace WebApi.Controllers.Api
             await FillPdfTemplateUsingAbsolutelyFreePdfSharp();
 
             await Task.CompletedTask;
+            return Ok();
+        }
+
+        [HttpGet]
+        [Route("signXml")]
+        public async Task<IHttpActionResult> SignXml()
+        {
+            await Task.CompletedTask;
+
+            await this.SignAndSendXmlRequestToSoapService();
+
             return Ok();
         }
 
@@ -242,7 +259,7 @@ namespace WebApi.Controllers.Api
                 ConfirmationNumber = "F79364EE-E538-46D7-9CAA-FEA5003EEA96"
             };
 
-            var xmlString = XmlSerialize(pdfData);
+            var xmlString = pdfData.XmlSerialize();
 
             var response = await httpClient.PostAsync(@"https://localhost/api/buggy/files/readFile", new MultipartFormDataContent
             {
@@ -288,8 +305,8 @@ namespace WebApi.Controllers.Api
         private byte[] ConvertPdfToByteArray<T>(T pdfDocument)
         {
             try
-            {
-                var xml = XmlSerialize(pdfDocument);
+            {                
+                var xml = pdfDocument.XmlSerialize();
                 return System.Text.Encoding.UTF8.GetBytes(xml);
             }
             catch (Exception ex)
@@ -299,27 +316,141 @@ namespace WebApi.Controllers.Api
             }
         }
 
-        private static string XmlSerialize<T>(T pdfDocument)
+
+
+        /// <summary>
+        /// Create the xml object, digitally sign the xml and send to soap api.
+        /// </summary>
+        /// <returns></returns>
+        private async Task SignAndSendXmlRequestToSoapService()
         {
-            var xml = "";
-            var serializer = new XmlSerializer(typeof(T));
-            using (var sww = new Utf8StringWriter())
+            var personLists = new List<Person>
             {
-                using (XmlWriter writer = XmlWriter.Create(sww))
+                new Person{ Id  =1, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com", CreditCardNumber = "1234567891011"},
+                new Person{ Id  =2, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com",  CreditCardNumber = "1234567891011"},
+                new Person{ Id  =3, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com", CreditCardNumber = "1234567891011"},
+                new Person{ Id  =4, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com", CreditCardNumber = "1234567891011"},
+                new Person{ Id  =5, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com" , CreditCardNumber = "1234567891011"}
+            };
+
+            var personXml = personLists.XmlSerialize();
+
+            //digitally sign the xml content
+            var signedXml = this.EncryptXml(personXml);
+            using (HttpContent content = new StringContent(signedXml, Encoding.UTF8, "text/xml"))
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://localhost/api/badrequest"))
+            {
+                request.Headers.Add("SOAPAction", "");
+                request.Content = content;
+                using (HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                 {
-                    serializer.Serialize(writer, pdfDocument);
-                    xml = sww.ToString(); // Your XML
+                    //response.EnsureSuccessStatusCode(); // throws an Exception if 404, 500, etc.
+                     await response.Content.ReadAsStringAsync();
                 }
             }
-            return xml;
-            //var jsonString = JsonConvert.SerializeObject(pdfDocument);
-            //bf.Serialize(ms, pdfDocument);
-            //
+        }
+
+        /// <summary>
+        /// https://www.wiktorzychla.com/2012/12/interoperable-xml-digital-signatures-c_20.html --> This code is taken from here
+        /// https://stackoverflow.com/questions/4666970/signing-soap-messages-using-x-509-certificate-from-wcf-service-to-java-webservic
+        /// https://www.scottbrady91.com/c-sharp/xml-signing-dotnet
+        /// https://docs.microsoft.com/en-us/dotnet/standard/security/how-to-encrypt-xml-elements-with-asymmetric-keys
+        /// </summary>
+        /// <param name="xmlString"></param>
+        /// <param name="SubjectName"></param>
+        /// <param name="Signature"></param>
+        /// <param name="keyInfoRefId"></param>
+        /// <returns></returns>
+        private string EncryptXml(string xmlString)
+        {
+            // Create an XmlDocument object.
+            XmlDocument xmlDoc = new XmlDocument();
+
+            // Load an XML file into the XmlDocument object.
+            xmlDoc.PreserveWhitespace = true;
+            xmlDoc.LoadXml(xmlString);
+
+            var cert = this.GetCertificateByThumbPrint();
+            var encryptedXml = EncryptXml(xmlDoc, "ArrayOfPerson", cert);
+
+            return encryptedXml;
+
+        }
+
+        private string EncryptXml(XmlDocument xmlDoc, string ElementToEncrypt, X509Certificate2 Cert)
+        {
+            ////////////////////////////////////////////////
+            // Find the specified element in the XmlDocument
+            // object and create a new XmlElement object.
+            ////////////////////////////////////////////////
+
+            XmlElement elementToEncrypt = xmlDoc.GetElementsByTagName(ElementToEncrypt)[0] as XmlElement;
+            // Throw an XmlException if the element was not found.
+            if (elementToEncrypt == null)
+            {
+                throw new XmlException("The specified element was not found");
+            }
+
+            //////////////////////////////////////////////////
+            // Create a new instance of the EncryptedXml class
+            // and use it to encrypt the XmlElement with the
+            // X.509 Certificate.
+            //////////////////////////////////////////////////
+
+            EncryptedXml eXml = new EncryptedXml();
+
+            // Encrypt the element.
+            EncryptedData edElement = eXml.Encrypt(elementToEncrypt, Cert);
+
+            ////////////////////////////////////////////////////
+            // Replace the element from the original XmlDocument
+            // object with the EncryptedData element.
+            ////////////////////////////////////////////////////
+            EncryptedXml.ReplaceElement(elementToEncrypt, edElement, false);
+
+            return edElement.GetXml().InnerXml;
+        }
+
+        /// <summary>
+        /// Loads X509 certificates (pfx) from personal store  for the current user ( this should be for the service account the app is running under)
+        /// https://stackoverflow.com/questions/4666970/signing-soap-messages-using-x-509-certificate-from-wcf-service-to-java-webservic
+        /// </summary>
+        /// <param name="subjectName"></param>
+        /// <returns></returns>
+        private  X509Certificate2 GetCertificateByThumbPrint()
+        {
+
+            // Load the certificate from the certificate store.
+            X509Certificate2 cert = null;
+            string thumbPrint = "b442dddc1d642ecef0d301d3f3067bd3f74a7874";
+
+            X509Store store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+
+            try
+            {
+                // Open the store.
+                store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+
+                // Find the certificate with the specified subject.
+                cert = store.Certificates.Find(X509FindType.FindByThumbprint, thumbPrint, false)[0];
+
+                // Throw an exception of the certificate was not found.
+                if (cert == null)
+                {
+                    throw new CryptographicException("The certificate could not be found.");
+                }
+            }
+            finally
+            {
+                // Close the store even if an exception was thrown.
+                store.Close();
+            }
+
+            return cert;
         }
     }
 
-    public class Utf8StringWriter : StringWriter
-    {
-        public override Encoding Encoding => Encoding.UTF8;
-    }
+    
+
+
 }

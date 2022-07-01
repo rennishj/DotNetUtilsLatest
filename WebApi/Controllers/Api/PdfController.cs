@@ -58,9 +58,9 @@ namespace WebApi.Controllers.Api
         {
             await Task.CompletedTask;
 
-            await this.SignAndSendXmlRequestToSoapService();
+            var decryptedXml = await this.SignAndSendXmlRequestToSoapService();
 
-            return Ok();
+            return Ok(decryptedXml);
         }
 
         private async Task FillPdfTemplateUsingAspose()
@@ -322,32 +322,50 @@ namespace WebApi.Controllers.Api
         /// Create the xml object, digitally sign the xml and send to soap api.
         /// </summary>
         /// <returns></returns>
-        private async Task SignAndSendXmlRequestToSoapService()
+        private async Task<string> SignAndSendXmlRequestToSoapService()
         {
-            var personLists = new List<Person>
+            string decryptedXml = null;
+
+            var creditCard = new CreditCard
             {
-                new Person{ Id  =1, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com", CreditCardNumber = "1234567891011"},
-                new Person{ Id  =2, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com",  CreditCardNumber = "1234567891011"},
-                new Person{ Id  =3, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com", CreditCardNumber = "1234567891011"},
-                new Person{ Id  =4, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com", CreditCardNumber = "1234567891011"},
-                new Person{ Id  =5, FirstName = "Rennish", LastName = "Joseph", Email = "rjoseph@email.com" , CreditCardNumber = "1234567891011"}
+                CardNumber = "12345678910",
+                ExpiryDate = DateTime.Today.AddYears(7)
             };
 
-            var personXml = personLists.XmlSerialize();
-
-            //digitally sign the xml content
-            var signedXml = this.EncryptXml(personXml);
-            using (HttpContent content = new StringContent(signedXml, Encoding.UTF8, "text/xml"))
-            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://localhost/api/badrequest"))
+            var requestContent = new CreditCardContainer
             {
-                request.Headers.Add("SOAPAction", "");
+                CardDetails = creditCard
+            };
+           
+
+            var xmlPayload = requestContent.XmlSerialize();
+
+            //digitally sign the xml content            
+            
+
+            var encryptedXml = this.EncryptXml(xmlPayload);
+
+            
+            var requestUri = "https://localhost:44323/api/utility/decryptXml";            
+
+            var xmlString  = requestContent.XmlSerialize();
+
+            requestContent.EncryptedXml = encryptedXml;
+
+            var finalXml = requestContent.XmlSerialize();
+
+            using (HttpContent content = new StringContent(finalXml, Encoding.UTF8, "text/xml"))
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestUri))
+            {               
                 request.Content = content;
                 using (HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                 {
-                    //response.EnsureSuccessStatusCode(); // throws an Exception if 404, 500, etc.
-                     await response.Content.ReadAsStringAsync();
+                    response.EnsureSuccessStatusCode(); // throws an Exception if 404, 500, etc.
+                    decryptedXml = await response.Content.ReadAsStringAsync();
                 }
             }
+
+            return decryptedXml;
         }
 
         /// <summary>
@@ -371,7 +389,7 @@ namespace WebApi.Controllers.Api
             xmlDoc.LoadXml(xmlString);
 
             var cert = this.GetCertificateByThumbPrint();
-            var encryptedXml = EncryptXml(xmlDoc, "ArrayOfPerson", cert);
+            var encryptedXml = EncryptXml(xmlDoc, "CardDetails", cert);
 
             return encryptedXml;
 
@@ -400,15 +418,17 @@ namespace WebApi.Controllers.Api
             EncryptedXml eXml = new EncryptedXml();
 
             // Encrypt the element.
-            EncryptedData edElement = eXml.Encrypt(elementToEncrypt, Cert);
+            EncryptedData edElement = eXml.Encrypt(elementToEncrypt, Cert);           
 
             ////////////////////////////////////////////////////
             // Replace the element from the original XmlDocument
             // object with the EncryptedData element.
             ////////////////////////////////////////////////////
-            EncryptedXml.ReplaceElement(elementToEncrypt, edElement, false);
+            EncryptedXml.ReplaceElement(elementToEncrypt, edElement, true);
 
-            return edElement.GetXml().InnerXml;
+            var xmlElement = edElement.GetXml().OuterXml;
+
+            return xmlElement;
         }
 
         /// <summary>
@@ -422,7 +442,7 @@ namespace WebApi.Controllers.Api
 
             // Load the certificate from the certificate store.
             X509Certificate2 cert = null;
-            string thumbPrint = "b442dddc1d642ecef0d301d3f3067bd3f74a7874";
+            string thumbPrint = "42d3c8c8c21afe794b889f67016f093b2454a830"; //b442dddc1d642ecef0d301d3f3067bd3f74a7874
 
             X509Store store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
 
@@ -440,6 +460,11 @@ namespace WebApi.Controllers.Api
                     throw new CryptographicException("The certificate could not be found.");
                 }
             }
+
+            catch (Exception ex)
+            {
+                var message = ex.Message;
+            }
             finally
             {
                 // Close the store even if an exception was thrown.
@@ -447,10 +472,12 @@ namespace WebApi.Controllers.Api
             }
 
             return cert;
-        }
+        }       
+
+
     }
 
-    
+
 
 
 }

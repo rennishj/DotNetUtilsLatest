@@ -1,4 +1,6 @@
-﻿using System.IO;
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace WebApi.Models
@@ -8,6 +10,18 @@ namespace WebApi.Models
     {
         //[DataMember]
         public string ConfirmationNumber { get; set; }
+    }
+
+    public class PersonContainer
+    {
+        public List<Person> PersonsList { get; set; }
+    }
+
+    public class CreditCard
+    {
+        public string CardNumber { get; set; }
+        public DateTime ExpiryDate { get; set; }
+
     }
 
     public class Person
@@ -21,6 +35,13 @@ namespace WebApi.Models
     public class Utf8StringWriter : StringWriter
     {
         public override Encoding Encoding => Encoding.UTF8;
+    }
+
+    public class CreditCardContainer
+    {
+        public CreditCard CardDetails { get; set; }
+        public string EncryptedXml { get; set; }
+
     }
 
 }

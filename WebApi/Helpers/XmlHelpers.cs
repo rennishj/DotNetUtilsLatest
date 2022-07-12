@@ -6,7 +6,7 @@ namespace WebApi.Helpers
 {
     public static class XmlHelpers
     {
-        public static string XmlSerialize<T>(this T pdfDocument)
+        public static string XmlSerialize<T>(this T data)
         {
             var xml = "";
             var serializer = new XmlSerializer(typeof(T));
@@ -14,7 +14,7 @@ namespace WebApi.Helpers
             {
                 using (XmlWriter writer = XmlWriter.Create(sww))
                 {
-                    serializer.Serialize(writer, pdfDocument);
+                    serializer.Serialize(writer, data);
                     xml = sww.ToString(); // Your XML
                 }
             }

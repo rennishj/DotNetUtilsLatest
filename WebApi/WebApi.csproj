@@ -45,6 +45,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="amqmdnetstd, Version=9.3.0.0, Culture=neutral, PublicKeyToken=23d6cb914eeaac0e, processorArchitecture=MSIL">
+      <HintPath>..\packages\IBMMQDotnetClient.9.3.0.0\lib\netstandard2.0\amqmdnetstd.dll</HintPath>
+    </Reference>
     <Reference Include="Aspose.PDF, Version=22.6.0.0, Culture=neutral, PublicKeyToken=716fcc553a201e56, processorArchitecture=MSIL">
       <HintPath>..\packages\Aspose.PDF.22.6.0\lib\net4.0\Aspose.PDF.dll</HintPath>
     </Reference>
@@ -174,7 +177,7 @@
     <Compile Include="Areas\HelpPage\XmlDocumentationProvider.cs" />
     <Compile Include="Controllers\Api\PdfController.cs" />
     <Compile Include="Controllers\HomeController.cs" />
-    <Compile Include="Controllers\ValuesController.cs" />
+    <Compile Include="Controllers\QueueController.cs" />
     <Compile Include="Global.asax.cs">
       <DependentUpon>Global.asax</DependentUpon>
     </Compile>

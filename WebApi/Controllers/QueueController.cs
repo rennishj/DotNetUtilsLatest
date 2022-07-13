@@ -19,7 +19,7 @@ namespace WebApi.Controllers
          private string connectionType = MQC.TRANSPORT_MQSERIES_MANAGED;
 
         // Define the name of your host connection (applies to client connections only)
-        const string hostName = "127.0.0.1";
+        const string hostName = "localhost";
 
         // Define the name of the queue manager to use (applies to all connections)
         const string qManager = "QM1";
@@ -36,6 +36,9 @@ namespace WebApi.Controllers
             return Ok();
         }
 
+        /// <summary>
+        /// https://stackoverflow.com/questions/59992909/ibm-mq-connection-using-user-credentials-not-configuration-login-from-service
+        /// </summary>
         private void QueueMessage()
         {
             try
@@ -65,7 +68,7 @@ namespace WebApi.Controllers
                 //  qMgr.AccessQueue("SYSTEM.DEFAULT.LOCAL.QUEUE", openOptions);
 
                 MQQueue system_default_local_queue =
-                  qMgr.AccessQueue("DEV.Queue.1", openOptions);
+                  qMgr.AccessQueue("DEV.QUEUE.1", openOptions);
 
                 // Define an IBM MQ message, writing some text in UTF format
                 MQMessage hello_world = new MQMessage();
@@ -90,7 +93,9 @@ namespace WebApi.Controllers
                 MQGetMessageOptions gmo = new MQGetMessageOptions(); //accept the defaults
                                                                      //same as MQGMO_DEFAULT
 
-                // Get the message off the queue
+
+                // Get the message off the queue. This actually removes the message from the queue
+                //https://stackoverflow.com/questions/70010855/difference-between-browsing-messages-or-just-get-them-one-by-one
                 system_default_local_queue.Get(retrievedMessage, gmo);
 
                 // Prove we have the message by displaying the UTF message text
@@ -131,6 +136,7 @@ namespace WebApi.Controllers
 
             // Set up the rest of the connection properties, based on the
             // connection type requested
+            //https://blogs.perficient.com/2019/08/05/how-to-configure-ibm-mq-authentication-os-and-ldap/  ---> This is really a good article.
             switch (connectionType)
             {
                 case MQC.TRANSPORT_MQSERIES_BINDINGS:
@@ -139,6 +145,8 @@ namespace WebApi.Controllers
                 case MQC.TRANSPORT_MQSERIES_XACLIENT:
                 case MQC.TRANSPORT_MQSERIES_MANAGED:
                     connectionProperties.Add(MQC.HOST_NAME_PROPERTY, hostName);
+                    connectionProperties.Add(MQC.USER_ID_PROPERTY, "developer");                   
+                    connectionProperties.Add(MQC.PASSWORD_PROPERTY, "developer");
                     connectionProperties.Add(MQC.PORT_PROPERTY, "1414");
                     connectionProperties.Add(MQC.CHANNEL_PROPERTY, channel);
                     break;

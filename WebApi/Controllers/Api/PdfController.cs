@@ -63,6 +63,21 @@ namespace WebApi.Controllers.Api
             return Ok(decryptedXml);
         }
 
+        
+
+        [HttpGet]
+        [Route("signSoapHeader")]
+        public async Task<IHttpActionResult> SignSOAPHeader()
+        {
+            var cert = this.GetCertificateByThumbPrint();
+            var signedXml = this.BuildEnvelope(cert);
+            await Task.CompletedTask;
+            
+            //var decryptedXml = await this.SignAndSendXmlRequestToSoapService();
+
+            return Ok(signedXml);
+        }
+
         private async Task FillPdfTemplateUsingAspose()
         {
             /* step1: download pdftoolkit comannd line
@@ -472,12 +487,206 @@ namespace WebApi.Controllers.Api
             }
 
             return cert;
-        }       
+        }
+
+        /// <summary>
+        /// https://stackoverflow.com/questions/47104618/how-do-i-call-xml-soap-service-that-requires-signature-from-net-core
+        /// This is manually creating the  SOAP envelope ...If at all possible, don't do this
+        /// </summary>
+        /// <param name="certificate"></param>
+        /// <returns></returns>
+        private string BuildEnvelope(X509Certificate2 certificate)
+        {
+            string envelope = null;
+            // note - lots of bits here specific to my thirdparty
+            string cert_id = string.Format("uuid-{0}-1", Guid.NewGuid().ToString());
+            using (var stream = new MemoryStream())
+            {
+                Encoding utf8 = new UTF8Encoding(false); // omit BOM
+                using (var writer = new XmlTextWriter(stream, utf8))
+                {
+                    // timestamp
+                    DateTime dt = DateTime.UtcNow;
+                    string now = dt.ToString("o").Substring(0, 23) + "Z";
+                    string plus5 = dt.AddMinutes(5).ToString("o").Substring(0, 23) + "Z";
+
+                    // soap envelope
+                    // <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://www.w3.org/2005/08/addressing" xmlns:u="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+                    writer.WriteStartDocument();
+                    writer.WriteStartElement("s", "Envelope", "http://www.w3.org/2003/05/soap-envelope");
+                    writer.WriteAttributeString("xmlns", "a", null, "http://www.w3.org/2005/08/addressing");
+                    writer.WriteAttributeString("xmlns", "u", null, "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd");
+
+                    writer.WriteStartElement("s", "Header", null);
+
+                    /////////////////
+                    //  saml guts  //
+                    /////////////////
+
+                    //<a:Action s:mustUnderstand="1">http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue</a:Action>
+                    writer.WriteStartElement("a", "Action", null);
+                    writer.WriteAttributeString("s", "mustUnderstand", null, "1");
+                    writer.WriteString("http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue");
+                    writer.WriteEndElement(); //Action
+
+                    //<a:MessageID>urn:uuid:0cc426dd-35bf-4c8b-a737-7e2ae94bd44d</a:MessageID>
+                    string msg_id = string.Format("urn:uuid:{0}", Guid.NewGuid().ToString());
+                    writer.WriteStartElement("a", "MessageID", null);
+                    writer.WriteString(msg_id);
+                    writer.WriteEndElement(); //MessageID
+
+                    //<a:ReplyTo><a:Address>http://www.w3.org/2005/08/addressing/anonymous</a:Address></a:ReplyTo>
+                    writer.WriteStartElement("a", "ReplyTo", null);
+                    writer.WriteStartElement("a", "Address", null);
+                    writer.WriteString("http://www.w3.org/2005/08/addressing/anonymous");
+                    writer.WriteEndElement(); //Address
+                    writer.WriteEndElement(); //ReplyTo
+
+                    writer.WriteStartElement("a", "To", "http://www.w3.org/2005/08/addressing");
+                    writer.WriteAttributeString("s", "mustUnderstand", null, "1");
+                    writer.WriteAttributeString("u", "Id", null, "_1");
+                    writer.WriteString("https://thirdparty.com/service.svc");
+                    writer.WriteEndElement(); //To
+
+                    //<o:Security xmlns:o="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" s:mustUnderstand="1">
+                    writer.WriteStartElement("o", "Security", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd");
+                    writer.WriteAttributeString("s", "mustUnderstand", null, "1");
+
+                    //<u:Timestamp u:Id="_0">
+                    writer.WriteStartElement("u", "Timestamp", null);
+                    writer.WriteAttributeString("u", "Id", null, "_0");
+
+                    //<u:Created>2018-02-08T15:03:13.115Z</u:Created>
+                    writer.WriteElementString("u", "Created", null, now);
+
+                    //<u:Expires>2018-02-08T15:08:13.115Z</u:Expires>
+                    writer.WriteElementString("u", "Expires", null, plus5);
+
+                    writer.WriteEndElement(); //Timestamp
+
+                    writer.WriteStartElement("o", "BinarySecurityToken", null);
+                    writer.WriteAttributeString("u", "Id", null, cert_id);
+                    writer.WriteAttributeString("ValueType", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3");
+                    writer.WriteAttributeString("EncodingType", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary");
+                    byte[] rawData = certificate.GetRawCertData();
+                    writer.WriteBase64(rawData, 0, rawData.Length);
+                    writer.WriteEndElement(); //BinarySecurityToken
+
+                    writer.WriteEndElement(); //Security
+                    writer.WriteEndElement(); //Header
+
+                    //<s:Body xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                    writer.WriteStartElement("s", "Body", "http://www.w3.org/2003/05/soap-envelope");
+                    writer.WriteAttributeString("xmlns", "xsd", null, "http://www.w3.org/2001/XMLSchema");
+                    writer.WriteAttributeString("xmlns", "xsi", null, "http://www.w3.org/2001/XMLSchema-instance");
+
+                    // your 3rd-party soap payload goes here
+                    //writer.WriteStartElement("???", "http://docs.oasis-open.org/ws-sx/ws-trust/200512");
+                    // ...                
+                    //writer.WriteEndElement(); // 
+                    writer.WriteEndElement(); // Body
+
+
+                    writer.WriteEndElement(); //Envelope
+                }
+
+                // signing pass
+                var signable = Encoding.UTF8.GetString(stream.ToArray());
+                XmlDocument doc = new XmlDocument();
+                doc.LoadXml(signable);
+
+                // see https://stackoverflow.com/a/6467877
+                var signedXml = new SignedXmlWithId(doc);
+
+                var key = certificate.GetRSAPrivateKey();
+                signedXml.SigningKey = key;
+                // these values may not be supported by your 3rd party - they may use e.g. SHA256 miniumum
+                signedXml.SignedInfo.CanonicalizationMethod = SignedXml.XmlDsigExcC14NTransformUrl;
+                signedXml.SignedInfo.SignatureMethod = SignedXml.XmlDsigRSASHA1Url;
+
+                // 
+                KeyInfo keyInfo = new KeyInfo();
+                KeyInfoX509Data x509data = new KeyInfoX509Data(certificate);
+                keyInfo.AddClause(x509data);
+                signedXml.KeyInfo = keyInfo;
+
+                // 3rd party wants us to only sign the timestamp fragment- ymmv
+                Reference reference0 = new Reference();
+                reference0.Uri = "#_0";
+                var t0 = new XmlDsigExcC14NTransform();
+                reference0.AddTransform(t0);
+                reference0.DigestMethod = SignedXml.XmlDsigSHA1Url;
+                signedXml.AddReference(reference0);
+                // etc
+
+                // get the sig fragment
+                signedXml.ComputeSignature();
+                XmlElement xmlDigitalSignature = signedXml.GetXml();
+
+                // modify the fragment so it points at BinarySecurityToken instead
+                XmlNode info = null;
+                for (int i = 0; i < xmlDigitalSignature.ChildNodes.Count; i++)
+                {
+                    var node = xmlDigitalSignature.ChildNodes[i];
+                    if (node.Name == "KeyInfo")
+                    {
+                        info = node;
+                        break;
+                    }
+                }
+                info.RemoveAll();
+
+                // 
+                XmlElement securityTokenReference = doc.CreateElement("o", "SecurityTokenReference", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd");
+                XmlElement reference = doc.CreateElement("o", "Reference", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd");
+                reference.SetAttribute("ValueType", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3");
+                // cert id                
+                reference.SetAttribute("URI", "#" + cert_id);
+                securityTokenReference.AppendChild(reference);
+                info.AppendChild(securityTokenReference);
+
+                var nsmgr = new XmlNamespaceManager(doc.NameTable);
+                nsmgr.AddNamespace("o", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd");
+                nsmgr.AddNamespace("s", "http://www.w3.org/2003/05/soap-envelope");
+                var security_node = doc.SelectSingleNode("/s:Envelope/s:Header/o:Security", nsmgr);
+                security_node.AppendChild(xmlDigitalSignature);
+
+                envelope = doc.OuterXml;
+            }
+
+            return envelope;
+        }
 
 
     }
 
 
+    public class SignedXmlWithId : SignedXml
+    {
+        public SignedXmlWithId(XmlDocument xml) : base(xml)
+        {
+        }
 
+        public SignedXmlWithId(XmlElement xmlElement)
+            : base(xmlElement)
+        {
+        }
+
+        public override XmlElement GetIdElement(XmlDocument doc, string id)
+        {
+            // check to see if it's a standard ID reference
+            XmlElement idElem = base.GetIdElement(doc, id);
+
+            if (idElem == null)
+            {
+                XmlNamespaceManager nsManager = new XmlNamespaceManager(doc.NameTable);
+                nsManager.AddNamespace("wsu", "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd");
+
+                idElem = doc.SelectSingleNode("//*[@wsu:Id=\"" + id + "\"]", nsManager) as XmlElement;
+            }
+
+            return idElem;
+        }
+    }
 
 }
